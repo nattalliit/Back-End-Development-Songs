@@ -51,103 +51,80 @@ def parse_json(data):
 ######################################################################
 # INSERT CODE HERE
 ######################################################################
-@app.route('/health', methods=['GET'])
-def health_check():
-    data = {'status': 'OK'}
-    response = make_response(jsonify(data), 200)
-    
-    response.headers['Server'] = 'Werkzeug/2.2.2 Python/3.7.16'
-    response.headers['Date'] = 'Wed, 08 Feb 2023 16:37:14 GMT'
-    response.headers['Content-Type'] = 'application/json'
-    response.headers['Content-Length'] = len(response.data)
-  
-    
-    return response
-
-if __name__ == '__main__':
-    app.run(debug=True)
+@app.route("/health")
+def healthz():
+    return jsonify(dict(status="OK")), 200
 
 
-@app.route('/count', methods=['GET'])
+@app.route("/count")
 def count():
-    """Return length of data"""
+    """return length of data"""
     count = db.songs.count_documents({})
-    
-    return jsonify({"count": count}), 200
+
+    return {"count": count}, 200
 
 
 
-from flask import Response
+@app.route("/song", methods=["GET"])
+def songs():
+    # docker run -d --name mongodb-test -e MONGO_INITDB_ROOT_USERNAME=user
+    # -e MONGO_INITDB_ROOT_PASSWORD=password -e MONGO_INITDB_DATABASE=collection mongo
+    results = list(db.songs.find({}))
+    print(results[0])
+    return {"songs": parse_json(results)}, 200
 
-@app.route('/song', methods=['GET'])
-def get_songs():
-    # Retrieve all documents from the 'songs' collection
-    all_songs = list(db.songs.find({}))
+@app.route("/song/<int:id>", methods=["GET"])
+def get_song_by_id(id):
+    song = db.songs.find_one({"id": id})
+    if not song:
+        return {"message": f"song with id {id} not found"}, 404
+    return parse_json(song), 200
 
-    # Format the data as required
-    songs_json = json_util.dumps({"songs": all_songs})
+@app.route("/song", methods=["POST"])
+def create_song():
+    # get data from the json body
+    song_in = request.json
 
-    # Create a response with the JSON data and set appropriate headers
-    response = Response(songs_json, status=200, mimetype='application/json')
-    response.headers['Server'] = 'Werkzeug/2.2.2 Python/3.7.16'
-    response.headers['Date'] = 'Thu, 09 Feb 2023 02:22:09 GMT'
-    response.headers['Content-Length'] = len(songs_json)
+    print(song_in["id"])
 
-    return response
+    # if the id is already there, return 303 with the URL for the resource
+    song = db.songs.find_one({"id": song_in["id"]})
+    if song:
+        return {
+            "Message": f"song with id {song_in['id']} already present"
+        }, 302
 
+    insert_id: InsertOneResult = db.songs.insert_one(song_in)
 
-
-@app.route('/song/<string:song_id>', methods=['GET'])
-def get_song_by_id(song_id):
-    # Retrieve the song document from the 'songs' collection by its ID
-    song = db.songs.find_one({"id": int(song_id)})
-
-    # Check if the song exists
-    if song is None:
-        abort(404, description=f"Song with ID {song_id} not found")
-
-    # Format the data as required
-    song_json = json_util.dumps(song)
-
-    # Create a response with the JSON data and set appropriate headers
-    response = Response(song_json, status=200, mimetype='application/json')
-    response.headers['Server'] = 'Werkzeug/2.2.2 Python/3.7.16'
-    response.headers['Date'] = 'Thu, 09 Feb 2023 02:23:59 GMT'
-    response.headers['Content-Length'] = len(song_json)
-
-    return response
+    return {"inserted id": parse_json(insert_id.inserted_id)}, 201
 
 
+@app.route("/song/<int:id>", methods=["PUT"])
+def update_song(id):
 
-@app.route('/song/<int:song_id>', methods=['PUT'])
-def update_song(song_id):
-    # Extract song data from the request body
-    updated_song_data = request.json
+    # get data from the json body
+    song_in = request.json
 
-    # Check if a song with the provided ID exists
-    existing_song = db.songs.find_one({"id": song_id})
-    if existing_song is None:
-        # If the song does not exist, return a 404 response
-        return jsonify({"message": f"Song with ID {song_id} not found"}), 404
+    song = db.songs.find_one({"id": id})
 
-    # Update the song in the database
-    db.songs.update_one({"id": song_id}, {"$set": updated_song_data})
+    if song == None:
+        return {"message": "song not found"}, 404
 
-    # Return a success message
-    return jsonify({"message": "Song updated successfully"}), 200
+    updated_data = {"$set": song_in}
 
+    result = db.songs.update_one({"id": id}, updated_data)
 
-
-
-@app.route('/song/<int:song_id>', methods=['DELETE'])
-def delete_song(song_id):
-    # Delete the song from the database
-    delete_result = db.songs.delete_one({"id": song_id})
-
-    # Check if the song was found and deleted
-    if delete_result.deleted_count == 0:
-        # If the song was not found, return a 404 response
-        return jsonify({"message": "Song not found"}), 404
+    if result.modified_count == 0:
+        return {"message": "song found, but nothing updated"}, 200
     else:
-        # If the song was successfully deleted, return a 204 response
+        return parse_json(db.songs.find_one({"id": id})), 201
+    
+
+    @app.route("/song/<int:id>", methods=["DELETE"])
+def delete_song(id):
+
+    result = db.songs.delete_one({"id": id})
+    if result.deleted_count == 0:
+        return {"message": "song not found"}, 404
+    else:
         return "", 204
